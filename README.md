@@ -9,7 +9,11 @@ A comprehensive, modular procedural tree and foliage generation suite for **Blen
 
 ## Visual Showcase
 
-| Full Procedural Tree Hierarchy | Organic Branch Collar Joint Flare |
+| Complete Tree & Subterranean Root System | Root Crown & Buttress Joint Flare |
+|:---:|:---:|
+| ![Full Tree with Root System](docs/images/full_tree_with_root_system.png) | ![Root Crown Flare Close-Up](docs/images/root_crown_buttress_closeup.png) |
+
+| Above-Ground Branch Hierarchy | Organic Branch Collar Joint Flare |
 |:---:|:---:|
 | ![Full Tree Structure](docs/images/procedural_tree_hierarchy.png) | ![Joint Collar Close-Up](docs/images/joint_collar_closeup.png) |
 
@@ -17,7 +21,17 @@ A comprehensive, modular procedural tree and foliage generation suite for **Blen
 
 ## Key Features
 
-### 1. Parametric Trunk & Spline Foundation
+### 1. Parametric Trunk & Subterranean Root System
+* **Complete Tree Representation:** Naturally models both the above-ground canopy and the underground root system as a unified organic entity.
+* **Subterranean Root Crown:** Trunk naturally extends below ground into a flared buttress zone (root flare / bole collar).
+* **Hierarchical Recursive Root Growth:**
+  * **Primary Roots:** Major structural taproots and lateral roots branching outward and downward into the subterranean zone.
+  * **Secondary Roots:** Branching off primary roots, strictly thinner than their parent root.
+  * **Tertiary Roots:** Fine, fibrous rootlets providing realistic subterranean anchoring.
+* **Da Vinci Proportions & Soil Tortuosity:** Realistic downward geotropism, high-frequency soil impedance tortuosity (3D noise), and smooth flared collar joints.
+* **Independent Ground Plane Masking:** Roots remain firmly anchored and static under procedural wind motion (`pp_wind_weight = 0.0`), while above-ground branches sway dynamically.
+
+### 2. Parametric Trunk & Spline Foundation
 * Spline-based curve primitive foundation with parametric height and resampling resolution.
 * Non-destructive 4D Simplex/Perlin noise displacement anchored at the trunk root.
 * Flexible taper falloff curves and profile controls.

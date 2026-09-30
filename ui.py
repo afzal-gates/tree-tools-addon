@@ -128,6 +128,55 @@ class TREE_PT_trunk(TreePanelBase, Panel):
 
 
 # ---------------------------------------------------------------------------
+# 2.5 Subterranean Root System Panel
+# ---------------------------------------------------------------------------
+class TREE_PT_roots(TreePanelBase, Panel):
+    bl_idname = "TREE_PT_roots"
+    bl_label = "Subterranean Root System"
+    bl_parent_id = "TREE_PT_main"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        mod = get_tree_modifier(obj)
+        if not mod:
+            layout.label(text="Select a tree to view controls", icon='RESTRICT_SELECT_ON')
+            return
+
+        box_crown = layout.box()
+        box_crown.label(text="Root Crown & Buttress Flare", icon='MOD_FLUIDSIM')
+        draw_socket(box_crown, mod, "Roots Enable", label="Enable Root System")
+        draw_socket(box_crown, mod, "Root Depth", label="Root Crown Depth (m)", icon='ARROW_LEFTRIGHT')
+        draw_socket(box_crown, mod, "Root Spread", label="Radial Spread (m)", icon='FULLSCREEN_ENTER')
+        draw_socket(box_crown, mod, "Root Flare Width", label="Buttress Flare Expansion", slider=True)
+
+        box_p = layout.box()
+        box_p.label(text="Primary Structural Roots", icon='PARTICLE_POINT')
+        draw_socket(box_p, mod, "Primary Root Count", label="Root Count")
+        draw_socket(box_p, mod, "Primary Root Radius Ratio", label="Thickness Ratio", slider=True)
+        draw_socket(box_p, mod, "Primary Root Angle", label="Downward Angle (°)")
+        draw_socket(box_p, mod, "Primary Root Joint Flare", label="Buttress Joint Flare", slider=True)
+
+        box_s = layout.box()
+        box_s.label(text="Secondary Roots", icon='CURVE_BEZCIRCLE')
+        draw_socket(box_s, mod, "Secondary Roots Count", label="Roots per Primary")
+        draw_socket(box_s, mod, "Secondary Roots Length", label="Length (m)")
+        draw_socket(box_s, mod, "Secondary Root Radius Ratio", label="Parent Thickness Ratio", slider=True)
+
+        box_t = layout.box()
+        box_t.label(text="Tertiary Fine Rootlets", icon='GP_DOTS')
+        draw_socket(box_t, mod, "Tertiary Roots Enable", label="Enable Fine Rootlets")
+        draw_socket(box_t, mod, "Tertiary Roots Count", label="Rootlet Count")
+
+        box_soil = layout.box()
+        box_soil.label(text="Soil Resistance & Geotropism", icon='FORCE_GRAV')
+        draw_socket(box_soil, mod, "Root Gravitropism", label="Downward Plunge (Gravitropism)", slider=True)
+        draw_socket(box_soil, mod, "Root Noise Strength", label="Soil Impedance Tortuosity", slider=True)
+        draw_socket(box_soil, mod, "Root Seed", label="Root Seed")
+
+
+# ---------------------------------------------------------------------------
 # 3. Biological Tropisms & Environmental Growth Panel
 # ---------------------------------------------------------------------------
 class TREE_PT_tropisms(TreePanelBase, Panel):
@@ -421,6 +470,7 @@ class TREE_PT_pipeline(TreePanelBase, Panel):
 classes = (
     TREE_PT_main,
     TREE_PT_trunk,
+    TREE_PT_roots,
     TREE_PT_tropisms,
     TREE_PT_branch_t1,
     TREE_PT_branch_t2,
