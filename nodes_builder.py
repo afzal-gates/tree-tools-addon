@@ -331,6 +331,7 @@ def build_branch_tier_group(force_rebuild=False):
     add_interface_socket(tree, "Branch Length", "INPUT", "NodeSocketFloat", default_value=3.5, min_val=0.1, max_val=30.0)
     add_interface_socket(tree, "Length Falloff", "INPUT", "NodeSocketFloat", default_value=0.55, min_val=0.0, max_val=1.0)
     add_interface_socket(tree, "Branch Angle", "INPUT", "NodeSocketFloat", default_value=55.0, min_val=0.0, max_val=180.0)
+    add_interface_socket(tree, "Crotch Smoothness", "INPUT", "NodeSocketFloat", default_value=0.75, min_val=0.0, max_val=1.0)
     add_interface_socket(tree, "Base Radius", "INPUT", "NodeSocketFloat", default_value=0.08, min_val=0.001, max_val=1.0)
     add_interface_socket(tree, "Tip Radius", "INPUT", "NodeSocketFloat", default_value=0.015, min_val=0.001, max_val=0.5)
     add_interface_socket(tree, "Radius Ratio", "INPUT", "NodeSocketFloat", default_value=0.48, min_val=0.05, max_val=0.95)
@@ -456,15 +457,6 @@ def build_branch_tier_group(force_rebuild=False):
     links.new(c2p.outputs["Rotation"], rot_spin.inputs["Rotation"])
     links.new(add_seed.outputs["Value"], rot_spin.inputs["Angle"])
 
-    # Euler Rotation 2: Branch tilt outward around Local X axis
-    rot_tilt = nodes.new("FunctionNodeRotateEuler")
-    rot_tilt.rotation_type = "AXIS_ANGLE"
-    rot_tilt.space = "LOCAL"
-    rot_tilt.inputs["Axis"].default_value = (1.0, 0.0, 0.0)
-    rot_tilt.location = (-100, 0)
-    links.new(rot_spin.outputs["Rotation"], rot_tilt.inputs["Rotation"])
-    links.new(deg_to_rad.outputs["Value"], rot_tilt.inputs["Angle"])
-
     # Store parent pivot on spawn points
     pos_spawn = nodes.new("GeometryNodeInputPosition")
     pos_spawn.location = (-600, 50)
@@ -477,38 +469,107 @@ def build_branch_tier_group(force_rebuild=False):
     links.new(c2p.outputs["Points"], store_parent_pivot.inputs["Geometry"])
     links.new(pos_spawn.outputs["Position"], store_parent_pivot.inputs["Value"])
 
-    # Base curve line primitive (pointing along Z axis, length 1.0)
+    # Curve Prototype: Smoothly arched curve starting tangent to parent curve!
     curve_line = nodes.new("GeometryNodeCurvePrimitiveLine")
     curve_line.inputs["Start"].default_value = (0.0, 0.0, 0.0)
     curve_line.inputs["End"].default_value = (0.0, 0.0, 1.0)
-    curve_line.location = (-100, 600)
+    curve_line.location = (-200, 600)
 
-    # Scale vector for instance: Branch Length along Z modulated by position
+    resample_proto = nodes.new("GeometryNodeResampleCurve")
+    safe_set_mode(resample_proto, "COUNT")
+    resample_proto.location = (0, 600)
+    links.new(curve_line.outputs["Curve"], resample_proto.inputs["Curve"])
+    links.new(in_node.outputs["Resolution"], resample_proto.inputs["Count"])
+
+    proto_param = nodes.new("GeometryNodeSplineParameter")
+    proto_param.location = (0, 450)
+
+    # Trigonometric components for Branch Angle: sin(theta) and cos(theta)
+    sin_theta = nodes.new("ShaderNodeMath")
+    sin_theta.operation = "SINE"
+    sin_theta.location = (-600, 650)
+    links.new(deg_to_rad.outputs["Value"], sin_theta.inputs[0])
+
+    cos_theta = nodes.new("ShaderNodeMath")
+    cos_theta.operation = "COSINE"
+    cos_theta.location = (-600, 500)
+    links.new(deg_to_rad.outputs["Value"], cos_theta.inputs[0])
+
+    # Tangential crotch ease-in formula:
+    # u2 = u * u
+    u_sq = nodes.new("ShaderNodeMath")
+    u_sq.operation = "MULTIPLY"
+    u_sq.location = (200, 450)
+    links.new(proto_param.outputs["Factor"], u_sq.inputs[0])
+    links.new(proto_param.outputs["Factor"], u_sq.inputs[1])
+
+    # u_diff = u - u2
+    u_diff = nodes.new("ShaderNodeMath")
+    u_diff.operation = "SUBTRACT"
+    u_diff.location = (350, 450)
+    links.new(proto_param.outputs["Factor"], u_diff.inputs[0])
+    links.new(u_sq.outputs["Value"], u_diff.inputs[1])
+
+    # c_diff = u_diff * Crotch Smoothness
+    c_diff = nodes.new("ShaderNodeMath")
+    c_diff.operation = "MULTIPLY"
+    c_diff.location = (500, 450)
+    links.new(u_diff.outputs["Value"], c_diff.inputs[0])
+    links.new(in_node.outputs["Crotch Smoothness"], c_diff.inputs[1])
+
+    # x_fac = u - c_diff
+    x_fac = nodes.new("ShaderNodeMath")
+    x_fac.operation = "SUBTRACT"
+    x_fac.location = (650, 450)
+    links.new(proto_param.outputs["Factor"], x_fac.inputs[0])
+    links.new(c_diff.outputs["Value"], x_fac.inputs[1])
+
+    # x_pos = x_fac * sin(theta)
+    x_pos = nodes.new("ShaderNodeMath")
+    x_pos.operation = "MULTIPLY"
+    x_pos.location = (800, 500)
+    links.new(x_fac.outputs["Value"], x_pos.inputs[0])
+    links.new(sin_theta.outputs["Value"], x_pos.inputs[1])
+
+    # z_pos = u * cos(theta)
+    z_pos = nodes.new("ShaderNodeMath")
+    z_pos.operation = "MULTIPLY"
+    z_pos.location = (800, 350)
+    links.new(proto_param.outputs["Factor"], z_pos.inputs[0])
+    links.new(cos_theta.outputs["Value"], z_pos.inputs[1])
+
+    # Combine into Position (X = x_pos, Y = 0.0, Z = z_pos)
+    combine_proto = nodes.new("ShaderNodeCombineXYZ")
+    combine_proto.inputs["Y"].default_value = 0.0
+    combine_proto.location = (950, 450)
+    links.new(x_pos.outputs["Value"], combine_proto.inputs["X"])
+    links.new(z_pos.outputs["Value"], combine_proto.inputs["Z"])
+
+    # Set Position on prototype curve
+    set_pos_proto = nodes.new("GeometryNodeSetPosition")
+    set_pos_proto.location = (1100, 600)
+    links.new(resample_proto.outputs["Curve"], set_pos_proto.inputs["Geometry"])
+    links.new(combine_proto.outputs["Vector"], set_pos_proto.inputs["Position"])
+
+    # Scale vector for instance: uniform scaling (eff_len, eff_len, eff_len)
     combine_scale = nodes.new("ShaderNodeCombineXYZ")
-    combine_scale.inputs["X"].default_value = 1.0
-    combine_scale.inputs["Y"].default_value = 1.0
-    combine_scale.location = (350, 450)
+    combine_scale.location = (1100, 300)
+    links.new(eff_len.outputs["Value"], combine_scale.inputs["X"])
+    links.new(eff_len.outputs["Value"], combine_scale.inputs["Y"])
     links.new(eff_len.outputs["Value"], combine_scale.inputs["Z"])
 
-    # Instance child curves on parent points
+    # Instance child curves on parent points with phyllotactic spin
     instance_node = nodes.new("GeometryNodeInstanceOnPoints")
-    instance_node.location = (150, 150)
+    instance_node.location = (1300, 200)
     links.new(store_parent_pivot.outputs["Geometry"], instance_node.inputs["Points"])
-    links.new(curve_line.outputs["Curve"], instance_node.inputs["Instance"])
-    links.new(rot_tilt.outputs["Rotation"], instance_node.inputs["Rotation"])
+    links.new(set_pos_proto.outputs["Geometry"], instance_node.inputs["Instance"])
+    links.new(rot_spin.outputs["Rotation"], instance_node.inputs["Rotation"])
     links.new(combine_scale.outputs["Vector"], instance_node.inputs["Scale"])
 
     # Realize Instances to convert back into editable curve splines
     realize_node = nodes.new("GeometryNodeRealizeInstances")
-    realize_node.location = (350, 150)
+    realize_node.location = (1450, 200)
     links.new(instance_node.outputs["Instances"], realize_node.inputs["Geometry"])
-
-    # Resample child curves
-    resample_node = nodes.new("GeometryNodeResampleCurve")
-    safe_set_mode(resample_node, "COUNT")
-    resample_node.location = (550, 150)
-    links.new(realize_node.outputs["Geometry"], resample_node.inputs["Curve"])
-    links.new(in_node.outputs["Resolution"], resample_node.inputs["Count"])
 
     # Spline parameter for child curve radius taper & wind weight
     spline_param = nodes.new("GeometryNodeSplineParameter")
@@ -664,7 +725,7 @@ def build_branch_tier_group(force_rebuild=False):
     # Set Curve Radius
     set_radius = nodes.new("GeometryNodeSetCurveRadius")
     set_radius.location = (800, 150)
-    links.new(resample_node.outputs["Curve"], set_radius.inputs["Curve"])
+    links.new(realize_node.outputs["Geometry"], set_radius.inputs["Curve"])
     links.new(rad_final.outputs["Value"], set_radius.inputs["Radius"])
 
     # Apply Noise Displacement Sub-Group
@@ -961,26 +1022,13 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     branch_tier_sub = build_branch_tier_group(force_rebuild=force_rebuild)
     foliage_sub = build_foliage_generator_group(force_rebuild=force_rebuild)
 
-    if not force_rebuild and master_name in bpy.data.node_groups:
-        cached_tree = bpy.data.node_groups[master_name]
-        socket_names = [item.name for item in cached_tree.interface.items_tree if getattr(item, 'in_out', None) == 'INPUT']
-        if "Tier 1 Radius Ratio" in socket_names and "Roots Enable" in socket_names and "Root Flare Width" in socket_names:
-            # Verify CurveToMesh Scale is connected
-            c2m_nodes = [n for n in cached_tree.nodes if n.type == 'CURVE_TO_MESH']
-            if c2m_nodes:
-                c2m = c2m_nodes[0]
-                if len(c2m.inputs["Scale"].links) == 0:
-                    rad_nodes = [n for n in cached_tree.nodes if n.type == 'INPUT_RADIUS']
-                    rad = rad_nodes[0] if rad_nodes else cached_tree.nodes.new("GeometryNodeInputRadius")
-                    cached_tree.links.new(rad.outputs["Radius"], c2m.inputs["Scale"])
-                c2m.inputs["Fill Caps"].default_value = True
-            return cached_tree
-        bpy.data.node_groups.remove(cached_tree, do_unlink=True)
-    elif master_name in bpy.data.node_groups:
-        bpy.data.node_groups.remove(bpy.data.node_groups[master_name], do_unlink=True)
-
-    tree = bpy.data.node_groups.new(name=master_name, type="GeometryNodeTree")
-    tree.interface.clear()
+    if master_name in bpy.data.node_groups:
+        tree = bpy.data.node_groups[master_name]
+        tree.nodes.clear()
+        tree.interface.clear()
+    else:
+        tree = bpy.data.node_groups.new(name=master_name, type="GeometryNodeTree")
+        tree.interface.clear()
 
     # Define all interface sockets
     # Category 1: Trunk & Foundation
@@ -1002,15 +1050,18 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     add_interface_socket(tree, "Root Spread", "INPUT", "NodeSocketFloat", default_value=4.2, min_val=0.5, max_val=30.0)
     add_interface_socket(tree, "Root Flare Width", "INPUT", "NodeSocketFloat", default_value=0.65, min_val=0.0, max_val=3.0)
     add_interface_socket(tree, "Primary Root Count", "INPUT", "NodeSocketInt", default_value=6, min_val=1, max_val=32)
-    add_interface_socket(tree, "Primary Root Radius Ratio", "INPUT", "NodeSocketFloat", default_value=0.55, min_val=0.1, max_val=0.95)
-    add_interface_socket(tree, "Primary Root Angle", "INPUT", "NodeSocketFloat", default_value=118.0, min_val=80.0, max_val=165.0)
-    add_interface_socket(tree, "Primary Root Joint Flare", "INPUT", "NodeSocketFloat", default_value=0.85, min_val=0.0, max_val=2.5)
+    add_interface_socket(tree, "Primary Root Radius Ratio", "INPUT", "NodeSocketFloat", default_value=0.42, min_val=0.1, max_val=0.95)
+    add_interface_socket(tree, "Primary Root Angle", "INPUT", "NodeSocketFloat", default_value=102.0, min_val=80.0, max_val=165.0)
+    add_interface_socket(tree, "Primary Root Joint Flare", "INPUT", "NodeSocketFloat", default_value=0.45, min_val=0.0, max_val=2.5)
+    add_interface_socket(tree, "Primary Root Crotch Smoothness", "INPUT", "NodeSocketFloat", default_value=0.80, min_val=0.0, max_val=1.0)
     add_interface_socket(tree, "Secondary Roots Count", "INPUT", "NodeSocketInt", default_value=4, min_val=0, max_val=20)
     add_interface_socket(tree, "Secondary Roots Length", "INPUT", "NodeSocketFloat", default_value=1.8, min_val=0.1, max_val=15.0)
     add_interface_socket(tree, "Secondary Root Radius Ratio", "INPUT", "NodeSocketFloat", default_value=0.45, min_val=0.1, max_val=0.90)
+    add_interface_socket(tree, "Secondary Root Crotch Smoothness", "INPUT", "NodeSocketFloat", default_value=0.75, min_val=0.0, max_val=1.0)
     add_interface_socket(tree, "Tertiary Roots Enable", "INPUT", "NodeSocketBool", default_value=True)
     add_interface_socket(tree, "Tertiary Roots Count", "INPUT", "NodeSocketInt", default_value=3, min_val=0, max_val=16)
-    add_interface_socket(tree, "Root Gravitropism", "INPUT", "NodeSocketFloat", default_value=0.45, min_val=-1.0, max_val=2.0)
+    add_interface_socket(tree, "Tertiary Root Crotch Smoothness", "INPUT", "NodeSocketFloat", default_value=0.70, min_val=0.0, max_val=1.0)
+    add_interface_socket(tree, "Root Gravitropism", "INPUT", "NodeSocketFloat", default_value=0.55, min_val=-1.0, max_val=2.0)
     add_interface_socket(tree, "Root Noise Strength", "INPUT", "NodeSocketFloat", default_value=0.35, min_val=0.0, max_val=3.0)
     add_interface_socket(tree, "Root Seed", "INPUT", "NodeSocketInt", default_value=50)
 
@@ -1035,6 +1086,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     add_interface_socket(tree, "Tier 1 Tip Radius", "INPUT", "NodeSocketFloat", default_value=0.035, min_val=0.001, max_val=1.0)
     add_interface_socket(tree, "Tier 1 Radius Ratio", "INPUT", "NodeSocketFloat", default_value=0.48, min_val=0.05, max_val=0.95)
     add_interface_socket(tree, "Tier 1 Joint Flare", "INPUT", "NodeSocketFloat", default_value=0.65, min_val=0.0, max_val=2.0)
+    add_interface_socket(tree, "Tier 1 Crotch Smoothness", "INPUT", "NodeSocketFloat", default_value=0.75, min_val=0.0, max_val=1.0)
     add_interface_socket(tree, "Tier 1 Phyllotaxis Angle", "INPUT", "NodeSocketFloat", default_value=137.5, min_val=0.0, max_val=360.0)
     add_interface_socket(tree, "Tier 1 Gravitropism", "INPUT", "NodeSocketFloat", default_value=0.15, min_val=-2.0, max_val=2.0)
     add_interface_socket(tree, "Tier 1 Noise Strength", "INPUT", "NodeSocketFloat", default_value=0.25, min_val=0.0, max_val=5.0)
@@ -1052,6 +1104,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     add_interface_socket(tree, "Tier 2 Tip Radius", "INPUT", "NodeSocketFloat", default_value=0.012, min_val=0.001, max_val=0.5)
     add_interface_socket(tree, "Tier 2 Radius Ratio", "INPUT", "NodeSocketFloat", default_value=0.48, min_val=0.05, max_val=0.95)
     add_interface_socket(tree, "Tier 2 Joint Flare", "INPUT", "NodeSocketFloat", default_value=0.65, min_val=0.0, max_val=2.0)
+    add_interface_socket(tree, "Tier 2 Crotch Smoothness", "INPUT", "NodeSocketFloat", default_value=0.75, min_val=0.0, max_val=1.0)
     add_interface_socket(tree, "Tier 2 Phyllotaxis Angle", "INPUT", "NodeSocketFloat", default_value=137.5, min_val=0.0, max_val=360.0)
     add_interface_socket(tree, "Tier 2 Gravitropism", "INPUT", "NodeSocketFloat", default_value=0.10, min_val=-2.0, max_val=2.0)
     add_interface_socket(tree, "Tier 2 Noise Strength", "INPUT", "NodeSocketFloat", default_value=0.20, min_val=0.0, max_val=5.0)
@@ -1069,6 +1122,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     add_interface_socket(tree, "Tier 3 Tip Radius", "INPUT", "NodeSocketFloat", default_value=0.004, min_val=0.001, max_val=0.2)
     add_interface_socket(tree, "Tier 3 Radius Ratio", "INPUT", "NodeSocketFloat", default_value=0.45, min_val=0.05, max_val=0.95)
     add_interface_socket(tree, "Tier 3 Joint Flare", "INPUT", "NodeSocketFloat", default_value=0.60, min_val=0.0, max_val=2.0)
+    add_interface_socket(tree, "Tier 3 Crotch Smoothness", "INPUT", "NodeSocketFloat", default_value=0.70, min_val=0.0, max_val=1.0)
     add_interface_socket(tree, "Tier 3 Seed", "INPUT", "NodeSocketInt", default_value=30)
 
     # Category 6: Leaves & Foliage
@@ -1099,7 +1153,10 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     add_interface_socket(tree, "Scan Voxel Adaptivity", "INPUT", "NodeSocketFloat", default_value=0.05, min_val=0.0, max_val=1.0)
 
     # Category 9: Meshing & Materials
-    add_interface_socket(tree, "Mesh Resolution", "INPUT", "NodeSocketInt", default_value=12, min_val=3, max_val=64)
+    add_interface_socket(tree, "Mesh Resolution", "INPUT", "NodeSocketInt", default_value=16, min_val=3, max_val=64)
+    add_interface_socket(tree, "Organic Smooth Union", "INPUT", "NodeSocketBool", default_value=False)
+    add_interface_socket(tree, "Union Voxel Size", "INPUT", "NodeSocketFloat", default_value=0.025, min_val=0.005, max_val=0.2)
+    add_interface_socket(tree, "Voxel Adaptivity", "INPUT", "NodeSocketFloat", default_value=0.08, min_val=0.0, max_val=1.0)
     add_interface_socket(tree, "Bark Material", "INPUT", "NodeSocketMaterial")
     add_interface_socket(tree, "Leaf Material", "INPUT", "NodeSocketMaterial")
 
@@ -1157,6 +1214,12 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     links.new(sw_depth.outputs["Output"], f_ground.inputs[0])
     links.new(total_h.outputs["Value"], f_ground.inputs[1])
 
+    sub_fg = nodes.new("ShaderNodeMath")
+    sub_fg.operation = "SUBTRACT"
+    sub_fg.inputs[0].default_value = 1.0
+    sub_fg.location = (-1100, 750)
+    links.new(f_ground.outputs["Value"], sub_fg.inputs[1])
+
     # Trunk Resample
     trunk_resample = nodes.new("GeometryNodeResampleCurve")
     safe_set_mode(trunk_resample, "COUNT")
@@ -1187,101 +1250,187 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     links.new(in_node.outputs["Obstacle Object"], trunk_trop.inputs["Obstacle Object"])
     links.new(in_node.outputs["Obstacle Avoidance Dist"], trunk_trop.inputs["Obstacle Distance"])
 
-    # Trunk Radius Taper
+    # Trunk Radius Taper & Buttress Flare (Above ground taper + Root flare peaking at f_ground, Taproot tapering below ground)
     trunk_param = nodes.new("GeometryNodeSplineParameter")
     trunk_param.location = (-700, 100)
 
+    # Above-ground normalized height: s_above = max(0.0, (Factor - f_ground) / (1.0 - f_ground))
+    sub_f_fg = nodes.new("ShaderNodeMath")
+    sub_f_fg.operation = "SUBTRACT"
+    sub_f_fg.location = (-500, 200)
+    links.new(trunk_param.outputs["Factor"], sub_f_fg.inputs[0])
+    links.new(f_ground.outputs["Value"], sub_f_fg.inputs[1])
+
+    div_s_above = nodes.new("ShaderNodeMath")
+    div_s_above.operation = "DIVIDE"
+    div_s_above.location = (-350, 200)
+    links.new(sub_f_fg.outputs["Value"], div_s_above.inputs[0])
+    links.new(sub_fg.outputs["Value"], div_s_above.inputs[1])
+
+    s_above = nodes.new("ShaderNodeMath")
+    s_above.operation = "MAXIMUM"
+    s_above.inputs[1].default_value = 0.0
+    s_above.location = (-200, 200)
+    links.new(div_s_above.outputs["Value"], s_above.inputs[0])
+
     trunk_pow = nodes.new("ShaderNodeMath")
     trunk_pow.operation = "POWER"
-    trunk_pow.location = (-500, 100)
-    links.new(trunk_param.outputs["Factor"], trunk_pow.inputs[0])
+    trunk_pow.location = (-50, 200)
+    links.new(s_above.outputs["Value"], trunk_pow.inputs[0])
     links.new(in_node.outputs["Trunk Taper Power"], trunk_pow.inputs[1])
 
     trunk_inv = nodes.new("ShaderNodeMath")
     trunk_inv.operation = "SUBTRACT"
     trunk_inv.inputs[0].default_value = 1.0
-    trunk_inv.location = (-350, 100)
+    trunk_inv.location = (100, 200)
     links.new(trunk_pow.outputs["Value"], trunk_inv.inputs[1])
 
     trunk_r_base = nodes.new("ShaderNodeMath")
     trunk_r_base.operation = "MULTIPLY"
-    trunk_r_base.location = (-200, 150)
+    trunk_r_base.location = (250, 250)
     links.new(trunk_inv.outputs["Value"], trunk_r_base.inputs[0])
     links.new(in_node.outputs["Trunk Base Radius"], trunk_r_base.inputs[1])
 
     trunk_r_tip = nodes.new("ShaderNodeMath")
     trunk_r_tip.operation = "MULTIPLY"
-    trunk_r_tip.location = (-200, 0)
+    trunk_r_tip.location = (250, 100)
     links.new(trunk_pow.outputs["Value"], trunk_r_tip.inputs[0])
     links.new(in_node.outputs["Trunk Tip Radius"], trunk_r_tip.inputs[1])
 
     trunk_rad = nodes.new("ShaderNodeMath")
     trunk_rad.operation = "ADD"
-    trunk_rad.location = (-50, 100)
+    trunk_rad.location = (400, 200)
     links.new(trunk_r_base.outputs["Value"], trunk_rad.inputs[0])
     links.new(trunk_r_tip.outputs["Value"], trunk_rad.inputs[1])
 
-    # Root Crown / Buttress Flare on trunk base:
-    # Flare zone: Factor <= (f_ground + 0.08)
-    flare_span = nodes.new("ShaderNodeMath")
-    flare_span.operation = "ADD"
-    flare_span.inputs[1].default_value = 0.08
-    flare_span.location = (-200, -150)
-    links.new(f_ground.outputs["Value"], flare_span.inputs[0])
+    # Flare above ground peaking at f_ground: (max(0.0, 1.0 - s_above / 0.15))^2 * (Base Radius * Root Flare Width)
+    div_flare_d = nodes.new("ShaderNodeMath")
+    div_flare_d.operation = "DIVIDE"
+    div_flare_d.inputs[1].default_value = 0.15
+    div_flare_d.location = (-50, 0)
+    links.new(s_above.outputs["Value"], div_flare_d.inputs[0])
 
-    div_ff = nodes.new("ShaderNodeMath")
-    div_ff.operation = "DIVIDE"
-    div_ff.location = (-50, -150)
-    links.new(trunk_param.outputs["Factor"], div_ff.inputs[0])
-    links.new(flare_span.outputs["Value"], div_ff.inputs[1])
+    sub_flare_d = nodes.new("ShaderNodeMath")
+    sub_flare_d.operation = "SUBTRACT"
+    sub_flare_d.inputs[0].default_value = 1.0
+    sub_flare_d.location = (100, 0)
+    links.new(div_flare_d.outputs["Value"], sub_flare_d.inputs[1])
 
-    sub_ff = nodes.new("ShaderNodeMath")
-    sub_ff.operation = "SUBTRACT"
-    sub_ff.inputs[0].default_value = 1.0
-    sub_ff.location = (100, -150)
-    links.new(div_ff.outputs["Value"], sub_ff.inputs[1])
+    max_flare_d = nodes.new("ShaderNodeMath")
+    max_flare_d.operation = "MAXIMUM"
+    max_flare_d.inputs[1].default_value = 0.0
+    max_flare_d.location = (250, 0)
+    links.new(sub_flare_d.outputs["Value"], max_flare_d.inputs[0])
 
-    max_ff = nodes.new("ShaderNodeMath")
-    max_ff.operation = "MAXIMUM"
-    max_ff.inputs[1].default_value = 0.0
-    max_ff.location = (250, -150)
-    links.new(sub_ff.outputs["Value"], max_ff.inputs[0])
-
-    pow_ff = nodes.new("ShaderNodeMath")
-    pow_ff.operation = "POWER"
-    pow_ff.inputs[1].default_value = 2.0
-    pow_ff.location = (400, -150)
-    links.new(max_ff.outputs["Value"], pow_ff.inputs[0])
+    pow_flare_d = nodes.new("ShaderNodeMath")
+    pow_flare_d.operation = "POWER"
+    pow_flare_d.inputs[1].default_value = 2.0
+    pow_flare_d.location = (400, 0)
+    links.new(max_flare_d.outputs["Value"], pow_flare_d.inputs[0])
 
     mul_flare_w = nodes.new("ShaderNodeMath")
     mul_flare_w.operation = "MULTIPLY"
-    mul_flare_w.location = (250, -300)
+    mul_flare_w.location = (250, -150)
     links.new(in_node.outputs["Trunk Base Radius"], mul_flare_w.inputs[0])
     links.new(in_node.outputs["Root Flare Width"], mul_flare_w.inputs[1])
 
     mul_flare_amp = nodes.new("ShaderNodeMath")
     mul_flare_amp.operation = "MULTIPLY"
-    mul_flare_amp.location = (400, -300)
+    mul_flare_amp.location = (400, -150)
     links.new(mul_flare_w.outputs["Value"], mul_flare_amp.inputs[0])
-    links.new(pow_ff.outputs["Value"], mul_flare_amp.inputs[1])
+    links.new(pow_flare_d.outputs["Value"], mul_flare_amp.inputs[1])
 
     sw_flare = nodes.new("GeometryNodeSwitch")
     sw_flare.input_type = "FLOAT"
-    sw_flare.location = (550, -300)
+    sw_flare.location = (550, -150)
     links.new(in_node.outputs["Roots Enable"], sw_flare.inputs["Switch"])
     sw_flare.inputs["False"].default_value = 0.0
     links.new(mul_flare_amp.outputs["Value"], sw_flare.inputs["True"])
 
-    trunk_rad_final = nodes.new("ShaderNodeMath")
-    trunk_rad_final.operation = "ADD"
-    trunk_rad_final.location = (150, 100)
-    links.new(trunk_rad.outputs["Value"], trunk_rad_final.inputs[0])
-    links.new(sw_flare.outputs["Output"], trunk_rad_final.inputs[1])
+    r_above_final = nodes.new("ShaderNodeMath")
+    r_above_final.operation = "ADD"
+    r_above_final.location = (600, 100)
+    links.new(trunk_rad.outputs["Value"], r_above_final.inputs[0])
+    links.new(sw_flare.outputs["Output"], r_above_final.inputs[1])
+
+    # Underground Taproot Radius:
+    # Flared base radius at ground level = Base Radius + (Root Flare if Roots Enable else 0)
+    sw_fl_amp = nodes.new("GeometryNodeSwitch")
+    sw_fl_amp.input_type = "FLOAT"
+    sw_fl_amp.location = (400, -300)
+    links.new(in_node.outputs["Roots Enable"], sw_fl_amp.inputs["Switch"])
+    sw_fl_amp.inputs["False"].default_value = 0.0
+    links.new(mul_flare_w.outputs["Value"], sw_fl_amp.inputs["True"])
+
+    flared_base_r = nodes.new("ShaderNodeMath")
+    flared_base_r.operation = "ADD"
+    flared_base_r.location = (550, -300)
+    links.new(in_node.outputs["Trunk Base Radius"], flared_base_r.inputs[0])
+    links.new(sw_fl_amp.outputs["Output"], flared_base_r.inputs[1])
+
+    # t_under = clamp(Factor / f_ground, 0.0, 1.0)
+    div_t_under = nodes.new("ShaderNodeMath")
+    div_t_under.operation = "DIVIDE"
+    div_t_under.location = (-50, -450)
+    links.new(trunk_param.outputs["Factor"], div_t_under.inputs[0])
+    links.new(f_ground.outputs["Value"], div_t_under.inputs[1])
+
+    min_t_under = nodes.new("ShaderNodeMath")
+    min_t_under.operation = "MINIMUM"
+    min_t_under.inputs[1].default_value = 1.0
+    min_t_under.location = (100, -450)
+    links.new(div_t_under.outputs["Value"], min_t_under.inputs[0])
+
+    max_t_under = nodes.new("ShaderNodeMath")
+    max_t_under.operation = "MAXIMUM"
+    max_t_under.inputs[1].default_value = 0.0
+    max_t_under.location = (250, -450)
+    links.new(min_t_under.outputs["Value"], max_t_under.inputs[0])
+
+    pow_t_under = nodes.new("ShaderNodeMath")
+    pow_t_under.operation = "POWER"
+    pow_t_under.inputs[1].default_value = 1.5
+    pow_t_under.location = (400, -450)
+    links.new(max_t_under.outputs["Value"], pow_t_under.inputs[0])
+
+    # Taproot tapers from flared_base_r down to 0.02
+    sub_tap_span = nodes.new("ShaderNodeMath")
+    sub_tap_span.operation = "SUBTRACT"
+    sub_tap_span.inputs[1].default_value = 0.02
+    sub_tap_span.location = (550, -400)
+    links.new(flared_base_r.outputs["Value"], sub_tap_span.inputs[0])
+
+    mul_tap = nodes.new("ShaderNodeMath")
+    mul_tap.operation = "MULTIPLY"
+    mul_tap.location = (700, -450)
+    links.new(sub_tap_span.outputs["Value"], mul_tap.inputs[0])
+    links.new(pow_t_under.outputs["Value"], mul_tap.inputs[1])
+
+    r_below_final = nodes.new("ShaderNodeMath")
+    r_below_final.operation = "ADD"
+    r_below_final.inputs[0].default_value = 0.02
+    r_below_final.location = (850, -450)
+    links.new(mul_tap.outputs["Value"], r_below_final.inputs[1])
+
+    # Continuous selection based on (Factor < f_ground)
+    is_underground = nodes.new("FunctionNodeCompare")
+    is_underground.data_type = "FLOAT"
+    is_underground.operation = "LESS_THAN"
+    is_underground.location = (700, -100)
+    links.new(trunk_param.outputs["Factor"], is_underground.inputs["A"])
+    links.new(f_ground.outputs["Value"], is_underground.inputs["B"])
+
+    trunk_rad_final = nodes.new("GeometryNodeSwitch")
+    trunk_rad_final.input_type = "FLOAT"
+    trunk_rad_final.location = (850, -100)
+    links.new(is_underground.outputs["Result"], trunk_rad_final.inputs["Switch"])
+    links.new(r_above_final.outputs["Value"], trunk_rad_final.inputs["False"])
+    links.new(r_below_final.outputs["Value"], trunk_rad_final.inputs["True"])
 
     trunk_set_rad = nodes.new("GeometryNodeSetCurveRadius")
     trunk_set_rad.location = (-350, 400)
     links.new(trunk_trop.outputs["Geometry"], trunk_set_rad.inputs["Curve"])
-    links.new(trunk_rad_final.outputs["Value"], trunk_set_rad.inputs["Radius"])
+    links.new(trunk_rad_final.outputs["Output"], trunk_set_rad.inputs["Radius"])
 
     # Store Trunk Attributes (Tier = 0)
     trunk_tier = nodes.new("GeometryNodeStoreNamedAttribute")
@@ -1307,7 +1456,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     trunk_prad.inputs["Name"].default_value = "parent_radius"
     trunk_prad.location = (200, 400)
     links.new(trunk_wind.outputs["Geometry"], trunk_prad.inputs["Geometry"])
-    links.new(trunk_rad_final.outputs["Value"], trunk_prad.inputs["Value"])
+    links.new(trunk_rad_final.outputs["Output"], trunk_prad.inputs["Value"])
 
     trunk_pfac = nodes.new("GeometryNodeStoreNamedAttribute")
     trunk_pfac.data_type = "FLOAT"
@@ -1320,31 +1469,32 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     # 2. Subterranean Root System (Primary, Secondary, and Tertiary Roots)
     branch_tier_sub = build_branch_tier_group()
 
-    # Primary Roots spawn along root crown: 0.01 to f_ground + 0.02
-    root_end_f = nodes.new("ShaderNodeMath")
-    root_end_f.operation = "ADD"
-    root_end_f.inputs[1].default_value = 0.02
-    root_end_f.location = (350, 750)
-    links.new(f_ground.outputs["Value"], root_end_f.inputs[0])
+    # Primary Roots spawn clustered at root collar: (f_ground - 0.025) to f_ground
+    root_start_f = nodes.new("ShaderNodeMath")
+    root_start_f.operation = "SUBTRACT"
+    root_start_f.inputs[1].default_value = 0.025
+    root_start_f.location = (350, 750)
+    links.new(f_ground.outputs["Value"], root_start_f.inputs[0])
 
-    clamp_root_end = nodes.new("ShaderNodeMath")
-    clamp_root_end.operation = "MINIMUM"
-    clamp_root_end.inputs[1].default_value = 0.30
-    clamp_root_end.location = (500, 750)
-    links.new(root_end_f.outputs["Value"], clamp_root_end.inputs[0])
+    clamp_root_start = nodes.new("ShaderNodeMath")
+    clamp_root_start.operation = "MAXIMUM"
+    clamp_root_start.inputs[1].default_value = 0.005
+    clamp_root_start.location = (500, 750)
+    links.new(root_start_f.outputs["Value"], clamp_root_start.inputs[0])
 
     root_t1_node = nodes.new("GeometryNodeGroup")
     root_t1_node.node_tree = branch_tier_sub
     root_t1_node.location = (650, 700)
     links.new(trunk_pfac.outputs["Geometry"], root_t1_node.inputs["Parent Curves"])
     links.new(in_node.outputs["Primary Root Count"], root_t1_node.inputs["Branch Count"])
-    root_t1_node.inputs["Start Factor"].default_value = 0.01
-    links.new(clamp_root_end.outputs["Value"], root_t1_node.inputs["End Factor"])
+    links.new(clamp_root_start.outputs["Value"], root_t1_node.inputs["Start Factor"])
+    links.new(f_ground.outputs["Value"], root_t1_node.inputs["End Factor"])
     links.new(in_node.outputs["Root Spread"], root_t1_node.inputs["Branch Length"])
     root_t1_node.inputs["Length Falloff"].default_value = 0.35
     links.new(in_node.outputs["Primary Root Angle"], root_t1_node.inputs["Branch Angle"])
     links.new(in_node.outputs["Primary Root Radius Ratio"], root_t1_node.inputs["Radius Ratio"])
     links.new(in_node.outputs["Primary Root Joint Flare"], root_t1_node.inputs["Joint Flare"])
+    links.new(in_node.outputs["Primary Root Crotch Smoothness"], root_t1_node.inputs["Crotch Smoothness"])
     root_t1_node.inputs["Phyllotaxis Angle"].default_value = 60.0
     links.new(in_node.outputs["Root Gravitropism"], root_t1_node.inputs["Gravitropism"])
     links.new(in_node.outputs["Root Noise Strength"], root_t1_node.inputs["Noise Strength"])
@@ -1363,13 +1513,14 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     root_t2_node.location = (950, 700)
     links.new(root_t1_node.outputs["Child Curves"], root_t2_node.inputs["Parent Curves"])
     links.new(in_node.outputs["Secondary Roots Count"], root_t2_node.inputs["Branch Count"])
-    root_t2_node.inputs["Start Factor"].default_value = 0.20
+    root_t2_node.inputs["Start Factor"].default_value = 0.35
     root_t2_node.inputs["End Factor"].default_value = 0.88
     links.new(in_node.outputs["Secondary Roots Length"], root_t2_node.inputs["Branch Length"])
     root_t2_node.inputs["Length Falloff"].default_value = 0.45
     root_t2_node.inputs["Branch Angle"].default_value = 48.0
     links.new(in_node.outputs["Secondary Root Radius Ratio"], root_t2_node.inputs["Radius Ratio"])
     root_t2_node.inputs["Joint Flare"].default_value = 0.65
+    links.new(in_node.outputs["Secondary Root Crotch Smoothness"], root_t2_node.inputs["Crotch Smoothness"])
     root_t2_node.inputs["Phyllotaxis Angle"].default_value = 110.0
     links.new(in_node.outputs["Root Gravitropism"], root_t2_node.inputs["Gravitropism"])
     links.new(in_node.outputs["Root Noise Strength"], root_t2_node.inputs["Noise Strength"])
@@ -1401,6 +1552,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     root_t3_node.inputs["Branch Angle"].default_value = 42.0
     root_t3_node.inputs["Radius Ratio"].default_value = 0.40
     root_t3_node.inputs["Joint Flare"].default_value = 0.50
+    links.new(in_node.outputs["Tertiary Root Crotch Smoothness"], root_t3_node.inputs["Crotch Smoothness"])
     root_t3_node.inputs["Phyllotaxis Angle"].default_value = 120.0
     links.new(in_node.outputs["Root Gravitropism"], root_t3_node.inputs["Gravitropism"])
     links.new(in_node.outputs["Root Noise Strength"], root_t3_node.inputs["Noise Strength"])
@@ -1428,11 +1580,6 @@ def build_procedural_tree_suite_master(force_rebuild=False):
 
     # 3. Tier 1 Above-Ground Canopy Branches
     # Remap Tier 1 Start Factor and End Factor so branches always begin above ground
-    sub_fg = nodes.new("ShaderNodeMath")
-    sub_fg.operation = "SUBTRACT"
-    sub_fg.inputs[0].default_value = 1.0
-    sub_fg.location = (350, 200)
-    links.new(f_ground.outputs["Value"], sub_fg.inputs[1])
 
     mul_t1_s = nodes.new("ShaderNodeMath")
     mul_t1_s.operation = "MULTIPLY"
@@ -1472,6 +1619,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     links.new(in_node.outputs["Tier 1 Tip Radius"], tier1_node.inputs["Tip Radius"])
     links.new(in_node.outputs["Tier 1 Radius Ratio"], tier1_node.inputs["Radius Ratio"])
     links.new(in_node.outputs["Tier 1 Joint Flare"], tier1_node.inputs["Joint Flare"])
+    links.new(in_node.outputs["Tier 1 Crotch Smoothness"], tier1_node.inputs["Crotch Smoothness"])
     links.new(in_node.outputs["Tier 1 Phyllotaxis Angle"], tier1_node.inputs["Phyllotaxis Angle"])
     links.new(in_node.outputs["Tier 1 Gravitropism"], tier1_node.inputs["Gravitropism"])
     links.new(in_node.outputs["Tier 1 Noise Strength"], tier1_node.inputs["Noise Strength"])
@@ -1493,6 +1641,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     links.new(in_node.outputs["Tier 2 Tip Radius"], tier2_node.inputs["Tip Radius"])
     links.new(in_node.outputs["Tier 2 Radius Ratio"], tier2_node.inputs["Radius Ratio"])
     links.new(in_node.outputs["Tier 2 Joint Flare"], tier2_node.inputs["Joint Flare"])
+    links.new(in_node.outputs["Tier 2 Crotch Smoothness"], tier2_node.inputs["Crotch Smoothness"])
     links.new(in_node.outputs["Tier 2 Phyllotaxis Angle"], tier2_node.inputs["Phyllotaxis Angle"])
     links.new(in_node.outputs["Tier 2 Gravitropism"], tier2_node.inputs["Gravitropism"])
     links.new(in_node.outputs["Tier 2 Noise Strength"], tier2_node.inputs["Noise Strength"])
@@ -1514,6 +1663,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     links.new(in_node.outputs["Tier 3 Tip Radius"], tier3_node.inputs["Tip Radius"])
     links.new(in_node.outputs["Tier 3 Radius Ratio"], tier3_node.inputs["Radius Ratio"])
     links.new(in_node.outputs["Tier 3 Joint Flare"], tier3_node.inputs["Joint Flare"])
+    links.new(in_node.outputs["Tier 3 Crotch Smoothness"], tier3_node.inputs["Crotch Smoothness"])
     links.new(in_node.outputs["Tier 3 Seed"], tier3_node.inputs["Seed"])
     tier3_node.inputs["Tier Index"].default_value = 3
 
@@ -1643,39 +1793,87 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     rad_input = nodes.new("GeometryNodeInputRadius")
     rad_input.location = (1550, -100)
 
+    # Minimum radius clamp for voxel union integrity (prevents fine twigs from dropping below voxel resolution)
+    rad_clamp = nodes.new("ShaderNodeMath")
+    rad_clamp.operation = "MAXIMUM"
+    rad_clamp.inputs[1].default_value = 0.006
+    rad_clamp.location = (1650, -100)
+    links.new(rad_input.outputs["Radius"], rad_clamp.inputs[0])
+
     curve_to_mesh = nodes.new("GeometryNodeCurveToMesh")
     curve_to_mesh.inputs["Fill Caps"].default_value = True # Caps ends to avoid hollow open barrels
-    curve_to_mesh.location = (1750, 150)
+    curve_to_mesh.location = (1800, 150)
     links.new(switch_wind.outputs["Output"], curve_to_mesh.inputs["Curve"])
     links.new(curve_profile.outputs["Curve"], curve_to_mesh.inputs["Profile Curve"])
-    links.new(rad_input.outputs["Radius"], curve_to_mesh.inputs["Scale"])
+    links.new(rad_clamp.outputs["Value"], curve_to_mesh.inputs["Scale"])
+
+    # Organic Remesh Union (SDF Mesh to Volume -> Volume to Mesh)
+    mesh_to_vol = nodes.new("GeometryNodeMeshToVolume")
+    try:
+        mesh_to_vol.inputs["Resolution Mode"].default_value = 'Size'
+    except Exception:
+        pass
+    mesh_to_vol.inputs["Density"].default_value = 1.0
+    mesh_to_vol.location = (1950, 300)
+    links.new(curve_to_mesh.outputs["Mesh"], mesh_to_vol.inputs["Mesh"])
+    links.new(in_node.outputs["Union Voxel Size"], mesh_to_vol.inputs["Voxel Size"])
+
+    vol_to_mesh = nodes.new("GeometryNodeVolumeToMesh")
+    try:
+        vol_to_mesh.inputs["Resolution Mode"].default_value = 'Size'
+    except Exception:
+        pass
+    vol_to_mesh.inputs["Threshold"].default_value = 0.1
+    vol_to_mesh.location = (2100, 300)
+    links.new(mesh_to_vol.outputs["Volume"], vol_to_mesh.inputs["Volume"])
+    links.new(in_node.outputs["Union Voxel Size"], vol_to_mesh.inputs["Voxel Size"])
+    links.new(in_node.outputs["Voxel Adaptivity"], vol_to_mesh.inputs["Adaptivity"])
+
+    # Switch between fast CurveToMesh and Organic Remesh Union
+    switch_union = nodes.new("GeometryNodeSwitch")
+    switch_union.input_type = "GEOMETRY"
+    switch_union.location = (2250, 150)
+    links.new(in_node.outputs["Organic Smooth Union"], switch_union.inputs["Switch"])
+    links.new(curve_to_mesh.outputs["Mesh"], switch_union.inputs["False"])
+    links.new(vol_to_mesh.outputs["Mesh"], switch_union.inputs["True"])
+
+    # Shade Smooth for Wood Mesh
+    smooth_wood = nodes.new("GeometryNodeSetShadeSmooth")
+    smooth_wood.location = (2400, 150)
+    links.new(switch_union.outputs["Output"], smooth_wood.inputs["Geometry"])
 
     # Set Bark Material
     set_mat_bark = nodes.new("GeometryNodeSetMaterial")
-    set_mat_bark.location = (1950, 150)
-    links.new(curve_to_mesh.outputs["Mesh"], set_mat_bark.inputs["Geometry"])
+    set_mat_bark.location = (2550, 150)
+    links.new(smooth_wood.outputs["Geometry"], set_mat_bark.inputs["Geometry"])
     links.new(in_node.outputs["Bark Material"], set_mat_bark.inputs["Material"])
+
+    # Shade Smooth for Leaves
+    smooth_leaves = nodes.new("GeometryNodeSetShadeSmooth")
+    smooth_leaves.location = (2100, 450)
+    links.new(foliage_node.outputs["Foliage Geometry"], smooth_leaves.inputs["Geometry"])
 
     # Set Leaf Material
     set_mat_leaf = nodes.new("GeometryNodeSetMaterial")
-    set_mat_leaf.location = (1350, 400)
-    links.new(foliage_node.outputs["Foliage Geometry"], set_mat_leaf.inputs["Geometry"])
+    set_mat_leaf.location = (2250, 450)
+    links.new(smooth_leaves.outputs["Geometry"], set_mat_leaf.inputs["Geometry"])
     links.new(in_node.outputs["Leaf Material"], set_mat_leaf.inputs["Material"])
 
     # Switch leaves bypass if Leaves Enable is False
     switch_leaves = nodes.new("GeometryNodeSwitch")
     switch_leaves.input_type = "GEOMETRY"
-    switch_leaves.location = (1550, 400)
+    switch_leaves.location = (2400, 450)
     links.new(in_node.outputs["Leaves Enable"], switch_leaves.inputs["Switch"])
     links.new(set_mat_leaf.outputs["Geometry"], switch_leaves.inputs["True"])
 
     # Join Wood Mesh and Foliage
     join_final = nodes.new("GeometryNodeJoinGeometry")
-    join_final.location = (2150, 200)
+    join_final.location = (2700, 200)
     links.new(set_mat_bark.outputs["Geometry"], join_final.inputs["Geometry"])
     links.new(switch_leaves.outputs["Output"], join_final.inputs["Geometry"])
 
     # Output final procedural geometry
+    out_node.location = (2900, 200)
     links.new(join_final.outputs["Geometry"], out_node.inputs["Geometry"])
 
     return tree

@@ -157,17 +157,20 @@ class TREE_PT_roots(TreePanelBase, Panel):
         draw_socket(box_p, mod, "Primary Root Radius Ratio", label="Thickness Ratio", slider=True)
         draw_socket(box_p, mod, "Primary Root Angle", label="Downward Angle (°)")
         draw_socket(box_p, mod, "Primary Root Joint Flare", label="Buttress Joint Flare", slider=True)
+        draw_socket(box_p, mod, "Primary Root Crotch Smoothness", label="Crotch Curve Tangency", slider=True)
 
         box_s = layout.box()
         box_s.label(text="Secondary Roots", icon='CURVE_BEZCIRCLE')
         draw_socket(box_s, mod, "Secondary Roots Count", label="Roots per Primary")
         draw_socket(box_s, mod, "Secondary Roots Length", label="Length (m)")
         draw_socket(box_s, mod, "Secondary Root Radius Ratio", label="Parent Thickness Ratio", slider=True)
+        draw_socket(box_s, mod, "Secondary Root Crotch Smoothness", label="Crotch Curve Tangency", slider=True)
 
         box_t = layout.box()
         box_t.label(text="Tertiary Fine Rootlets", icon='GP_DOTS')
         draw_socket(box_t, mod, "Tertiary Roots Enable", label="Enable Fine Rootlets")
         draw_socket(box_t, mod, "Tertiary Roots Count", label="Rootlet Count")
+        draw_socket(box_t, mod, "Tertiary Root Crotch Smoothness", label="Crotch Curve Tangency", slider=True)
 
         box_soil = layout.box()
         box_soil.label(text="Soil Resistance & Geotropism", icon='FORCE_GRAV')
@@ -254,6 +257,7 @@ class TREE_PT_branch_t1(TreePanelBase, Panel):
         row_hier1 = col.row(align=True)
         draw_socket(row_hier1, mod, "Tier 1 Radius Ratio", label="Parent Thickness Ratio", slider=True)
         draw_socket(row_hier1, mod, "Tier 1 Joint Flare", label="Joint Collar Flare", slider=True)
+        draw_socket(col, mod, "Tier 1 Crotch Smoothness", label="Crotch Curve Tangency", slider=True)
 
         draw_socket(col, mod, "Tier 1 Phyllotaxis Angle", label="Phyllotaxis Spiral (°)", slider=True)
         draw_socket(col, mod, "Tier 1 Gravitropism", label="Branch Droop", slider=True)
@@ -299,6 +303,7 @@ class TREE_PT_branch_t2(TreePanelBase, Panel):
         row_hier2 = col.row(align=True)
         draw_socket(row_hier2, mod, "Tier 2 Radius Ratio", label="Parent Thickness Ratio", slider=True)
         draw_socket(row_hier2, mod, "Tier 2 Joint Flare", label="Joint Collar Flare", slider=True)
+        draw_socket(col, mod, "Tier 2 Crotch Smoothness", label="Crotch Curve Tangency", slider=True)
 
         draw_socket(col, mod, "Tier 2 Phyllotaxis Angle", label="Phyllotaxis Angle (°)", slider=True)
         draw_socket(col, mod, "Tier 2 Gravitropism", label="Droop", slider=True)
@@ -344,6 +349,7 @@ class TREE_PT_branch_t3(TreePanelBase, Panel):
         row_hier3 = col.row(align=True)
         draw_socket(row_hier3, mod, "Tier 3 Radius Ratio", label="Parent Thickness Ratio", slider=True)
         draw_socket(row_hier3, mod, "Tier 3 Joint Flare", label="Joint Collar Flare", slider=True)
+        draw_socket(col, mod, "Tier 3 Crotch Smoothness", label="Crotch Curve Tangency", slider=True)
 
         draw_socket(col, mod, "Tier 3 Seed", label="Seed")
 
@@ -442,7 +448,39 @@ class TREE_PT_wind(TreePanelBase, Panel):
 
 
 # ---------------------------------------------------------------------------
-# 10. Real-Time Pipeline & Pivot Painter 2.0 Export Panel
+# 10. Meshing & Organic Remesh Union Panel
+# ---------------------------------------------------------------------------
+class TREE_PT_meshing(TreePanelBase, Panel):
+    bl_idname = "TREE_PT_meshing"
+    bl_label = "Meshing & Organic Union"
+    bl_parent_id = "TREE_PT_main"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        mod = get_tree_modifier(obj)
+        if not mod:
+            layout.label(text="Select a tree to view controls", icon='RESTRICT_SELECT_ON')
+            return
+
+        col = layout.column(align=True)
+        draw_socket(col, mod, "Mesh Resolution", label="Spline Radial Resolution")
+
+        box_union = layout.box()
+        box_union.label(text="Organic Remesh Union (SDF)", icon='MOD_REMESH')
+        draw_socket(box_union, mod, "Organic Smooth Union", label="Enable Smooth Union (VDB)", icon='CHECKBOX_HLT')
+        draw_socket(box_union, mod, "Union Voxel Size", label="Voxel Size (m)")
+        draw_socket(box_union, mod, "Voxel Adaptivity", label="Adaptivity Decimation", slider=True)
+
+        box_mat = layout.box()
+        box_mat.label(text="Materials", icon='MATERIAL')
+        draw_socket(box_mat, mod, "Bark Material", label="Bark Material")
+        draw_socket(box_mat, mod, "Leaf Material", label="Leaf Material")
+
+
+# ---------------------------------------------------------------------------
+# 11. Real-Time Pipeline & Pivot Painter 2.0 Export Panel
 # ---------------------------------------------------------------------------
 class TREE_PT_pipeline(TreePanelBase, Panel):
     bl_idname = "TREE_PT_pipeline"
@@ -478,6 +516,7 @@ classes = (
     TREE_PT_scan,
     TREE_PT_leaves,
     TREE_PT_wind,
+    TREE_PT_meshing,
     TREE_PT_pipeline,
 )
 
