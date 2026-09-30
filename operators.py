@@ -61,6 +61,7 @@ class TREE_OT_create_tree(Operator):
         description="Starting tree archetype preset",
         items=[
             ("Oak (Deciduous)", "Oak (Deciduous)", "Spreading crown with gnarly secondary branches"),
+            ("Ancient Hollow Oak (600y)", "Ancient Hollow Oak (600y)", "Ancient gnarled trunk with deep fissures and hollow rot cavities"),
             ("Pine (Conifer)", "Pine (Conifer)", "Tall conical trunk with drooping horizontal tiers"),
             ("Birch (Slender)", "Birch (Slender)", "Slender upright trunk with steep delicate branches"),
             ("Weeping Willow", "Weeping Willow", "Cascading curtain-like branches with hanging tips"),
@@ -117,6 +118,7 @@ class TREE_OT_apply_preset(Operator):
         name="Preset",
         items=[
             ("Oak (Deciduous)", "Oak (Deciduous)", "Spreading crown with gnarly secondary branches"),
+            ("Ancient Hollow Oak (600y)", "Ancient Hollow Oak (600y)", "Ancient gnarled trunk with deep fissures and hollow rot cavities"),
             ("Pine (Conifer)", "Pine (Conifer)", "Tall conical trunk with drooping horizontal tiers"),
             ("Birch (Slender)", "Birch (Slender)", "Slender upright trunk with steep delicate branches"),
             ("Weeping Willow", "Weeping Willow", "Cascading curtain-like branches with hanging tips"),

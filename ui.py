@@ -480,6 +480,47 @@ class TREE_PT_meshing(TreePanelBase, Panel):
 
 
 # ---------------------------------------------------------------------------
+# 10. Ancient Tree Aging, Weathering & Cavities Panel
+# ---------------------------------------------------------------------------
+class TREE_PT_aging(TreePanelBase, Panel):
+    bl_idname = "TREE_PT_aging"
+    bl_label = "Ancient Aging & Cavities"
+    bl_parent_id = "TREE_PT_main"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        obj = context.active_object
+        mod = get_tree_modifier(obj)
+        if not mod:
+            layout.label(text="Select a tree to view controls", icon='RESTRICT_SELECT_ON')
+            return
+
+        col = layout.column(align=True)
+        draw_socket(col, mod, "Aging Features Enable", label="Enable Aging & Weathering", icon='CHECKBOX_HLT')
+        
+        box_age = layout.box()
+        box_age.label(text="Biological Age", icon='TIME')
+        draw_socket(box_age, mod, "Tree Age", label="Tree Age (Years)", slider=True)
+        
+        box_bark = layout.box()
+        box_bark.label(text="Bark Fissures & Grooves", icon='TEXTURE')
+        draw_socket(box_bark, mod, "Bark Fissure Depth", label="Fissure Depth", slider=True)
+        draw_socket(box_bark, mod, "Bark Fissure Scale", label="Crevice Scale", slider=True)
+
+        box_gnarl = layout.box()
+        box_gnarl.label(text="Trunk Deformation & Burls", icon='MOD_DISPLACE')
+        draw_socket(box_gnarl, mod, "Trunk Fluting", label="Column Fluting", slider=True)
+        draw_socket(box_gnarl, mod, "Burl Gnarliness", label="Woody Burls & Knots", slider=True)
+
+        box_cav = layout.box()
+        box_cav.label(text="Trunk Hollows & Rot Cavities", icon='MESH_ICOSPHERE')
+        draw_socket(box_cav, mod, "Cavities Enable", label="Enable Cavities", icon='CHECKBOX_HLT')
+        draw_socket(box_cav, mod, "Cavity Scale", label="Cavity Size", slider=True)
+        draw_socket(box_cav, mod, "Cavity Height", label="Cavity Height (m)")
+
+
+# ---------------------------------------------------------------------------
 # 11. Real-Time Pipeline & Pivot Painter 2.0 Export Panel
 # ---------------------------------------------------------------------------
 class TREE_PT_pipeline(TreePanelBase, Panel):
@@ -516,6 +557,7 @@ classes = (
     TREE_PT_scan,
     TREE_PT_leaves,
     TREE_PT_wind,
+    TREE_PT_aging,
     TREE_PT_meshing,
     TREE_PT_pipeline,
 )

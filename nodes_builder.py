@@ -1010,7 +1010,408 @@ def build_foliage_generator_group(force_rebuild=False):
 
 
 # ---------------------------------------------------------------------------
-# 5. Master Geometry Node Tree: Procedural Tree & Foliage Suite
+# 5. Sub-Group: Ancient Tree Aging, Weathering & Cavities Engine
+# ---------------------------------------------------------------------------
+def build_tree_aging_group(force_rebuild=False):
+    """Builds the procedural ancient tree aging engine with bark fissures, burls, and cavities."""
+    name = "Tree_Sub_Aging_Engine"
+    if not force_rebuild and name in bpy.data.node_groups:
+        return bpy.data.node_groups[name]
+    if name in bpy.data.node_groups:
+        bpy.data.node_groups.remove(bpy.data.node_groups[name], do_unlink=True)
+
+    tree = bpy.data.node_groups.new(name=name, type="GeometryNodeTree")
+    tree.interface.clear()
+
+    # Sockets
+    add_interface_socket(tree, "Geometry", "INPUT", "NodeSocketGeometry")
+    add_interface_socket(tree, "Tree Age", "INPUT", "NodeSocketFloat", default_value=180.0, min_val=10.0, max_val=1000.0)
+    add_interface_socket(tree, "Bark Fissure Depth", "INPUT", "NodeSocketFloat", default_value=0.035, min_val=0.0, max_val=0.2)
+    add_interface_socket(tree, "Bark Fissure Scale", "INPUT", "NodeSocketFloat", default_value=1.0, min_val=0.1, max_val=5.0)
+    add_interface_socket(tree, "Trunk Fluting", "INPUT", "NodeSocketFloat", default_value=0.40, min_val=0.0, max_val=2.0)
+    add_interface_socket(tree, "Burl Gnarliness", "INPUT", "NodeSocketFloat", default_value=0.35, min_val=0.0, max_val=2.0)
+    add_interface_socket(tree, "Cavities Enable", "INPUT", "NodeSocketBool", default_value=True)
+    add_interface_socket(tree, "Cavity Scale", "INPUT", "NodeSocketFloat", default_value=0.38, min_val=0.05, max_val=1.5)
+    add_interface_socket(tree, "Cavity Height", "INPUT", "NodeSocketFloat", default_value=1.6, min_val=0.5, max_val=5.0)
+    add_interface_socket(tree, "Trunk Base Radius", "INPUT", "NodeSocketFloat", default_value=0.52)
+    add_interface_socket(tree, "Trunk Height", "INPUT", "NodeSocketFloat", default_value=9.5)
+
+    add_interface_socket(tree, "Geometry", "OUTPUT", "NodeSocketGeometry")
+
+    nodes = tree.nodes
+    links = tree.links
+
+    in_n = nodes.new("NodeGroupInput")
+    in_n.location = (-1400, 0)
+    out_n = nodes.new("NodeGroupOutput")
+    out_n.location = (1600, 0)
+
+    # 1. Normalized Age Factor: clamp(Tree Age / 200.0, 0.05, 3.5)
+    div_age = nodes.new("ShaderNodeMath")
+    div_age.operation = "DIVIDE"
+    div_age.inputs[1].default_value = 200.0
+    div_age.location = (-1100, -200)
+    links.new(in_n.outputs["Tree Age"], div_age.inputs[0])
+
+    clamp_age = nodes.new("ShaderNodeMath")
+    clamp_age.operation = "MINIMUM"
+    clamp_age.inputs[1].default_value = 3.5
+    clamp_age.location = (-950, -200)
+    links.new(div_age.outputs["Value"], clamp_age.inputs[0])
+
+    age_norm = nodes.new("ShaderNodeMath")
+    age_norm.operation = "MAXIMUM"
+    age_norm.inputs[1].default_value = 0.05
+    age_norm.location = (-800, -200)
+    links.new(clamp_age.outputs["Value"], age_norm.inputs[0])
+
+    # 2. pp_tier modulation mask:
+    # Trunk (0) -> 1.0, Primary Branches (1) -> 0.35, Roots (>=10) -> 0.75, Twigs -> 0.0
+    read_tier = nodes.new("GeometryNodeInputNamedAttribute")
+    read_tier.data_type = "FLOAT"
+    read_tier.inputs["Name"].default_value = "pp_tier"
+    read_tier.location = (-1100, -400)
+
+    comp_trunk = nodes.new("FunctionNodeCompare")
+    comp_trunk.data_type = "FLOAT"
+    comp_trunk.operation = "EQUAL"
+    comp_trunk.inputs["B"].default_value = 0.0
+    comp_trunk.inputs["Epsilon"].default_value = 0.1
+    comp_trunk.location = (-900, -350)
+    links.new(read_tier.outputs["Attribute"], comp_trunk.inputs["A"])
+
+    comp_t1 = nodes.new("FunctionNodeCompare")
+    comp_t1.data_type = "FLOAT"
+    comp_t1.operation = "EQUAL"
+    comp_t1.inputs["B"].default_value = 1.0
+    comp_t1.inputs["Epsilon"].default_value = 0.1
+    comp_t1.location = (-900, -500)
+    links.new(read_tier.outputs["Attribute"], comp_t1.inputs["A"])
+
+    comp_root = nodes.new("FunctionNodeCompare")
+    comp_root.data_type = "FLOAT"
+    comp_root.operation = "GREATER_EQUAL"
+    comp_root.inputs["B"].default_value = 9.5
+    comp_root.location = (-900, -650)
+    links.new(read_tier.outputs["Attribute"], comp_root.inputs["A"])
+
+    mul_t1_w = nodes.new("ShaderNodeMath")
+    mul_t1_w.operation = "MULTIPLY"
+    mul_t1_w.inputs[1].default_value = 0.35
+    mul_t1_w.location = (-700, -500)
+    links.new(comp_t1.outputs["Result"], mul_t1_w.inputs[0])
+
+    mul_root_w = nodes.new("ShaderNodeMath")
+    mul_root_w.operation = "MULTIPLY"
+    mul_root_w.inputs[1].default_value = 0.75
+    mul_root_w.location = (-700, -650)
+    links.new(comp_root.outputs["Result"], mul_root_w.inputs[0])
+
+    add_w1 = nodes.new("ShaderNodeMath")
+    add_w1.operation = "ADD"
+    add_w1.location = (-550, -400)
+    links.new(comp_trunk.outputs["Result"], add_w1.inputs[0])
+    links.new(mul_t1_w.outputs["Value"], add_w1.inputs[1])
+
+    tier_weight = nodes.new("ShaderNodeMath")
+    tier_weight.operation = "ADD"
+    tier_weight.location = (-400, -450)
+    links.new(add_w1.outputs["Value"], tier_weight.inputs[0])
+    links.new(mul_root_w.outputs["Value"], tier_weight.inputs[1])
+
+    # Combined aging influence: age_norm * tier_weight
+    age_influence = nodes.new("ShaderNodeMath")
+    age_influence.operation = "MULTIPLY"
+    age_influence.location = (-250, -300)
+    links.new(age_norm.outputs["Value"], age_influence.inputs[0])
+    links.new(tier_weight.outputs["Value"], age_influence.inputs[1])
+
+    # 3. Bark Fissures & Longitudinal Furrows
+    pos = nodes.new("GeometryNodeInputPosition")
+    pos.location = (-1100, 200)
+    norm = nodes.new("GeometryNodeInputNormal")
+    norm.location = (-1100, 50)
+
+    # Stretched coordinates along Z: (X * 4.0 * S, Y * 4.0 * S, Z * 0.4 * S)
+    mul_s_xy = nodes.new("ShaderNodeMath")
+    mul_s_xy.operation = "MULTIPLY"
+    mul_s_xy.inputs[1].default_value = 4.0
+    mul_s_xy.location = (-900, 350)
+    links.new(in_n.outputs["Bark Fissure Scale"], mul_s_xy.inputs[0])
+
+    mul_s_z = nodes.new("ShaderNodeMath")
+    mul_s_z.operation = "MULTIPLY"
+    mul_s_z.inputs[1].default_value = 0.4
+    mul_s_z.location = (-900, 200)
+    links.new(in_n.outputs["Bark Fissure Scale"], mul_s_z.inputs[0])
+
+    comb_scale = nodes.new("ShaderNodeCombineXYZ")
+    comb_scale.location = (-750, 300)
+    links.new(mul_s_xy.outputs["Value"], comb_scale.inputs["X"])
+    links.new(mul_s_xy.outputs["Value"], comb_scale.inputs["Y"])
+    links.new(mul_s_z.outputs["Value"], comb_scale.inputs["Z"])
+
+    mul_coords = nodes.new("ShaderNodeVectorMath")
+    mul_coords.operation = "MULTIPLY"
+    mul_coords.location = (-600, 250)
+    links.new(pos.outputs["Position"], mul_coords.inputs[0])
+    links.new(comb_scale.outputs["Vector"], mul_coords.inputs[1])
+
+    voronoi = nodes.new("ShaderNodeTexVoronoi")
+    voronoi.feature = 'DISTANCE_TO_EDGE'
+    voronoi.distance = 'EUCLIDEAN'
+    voronoi.inputs["Scale"].default_value = 1.0
+    voronoi.location = (-400, 250)
+    links.new(mul_coords.outputs["Vector"], voronoi.inputs["Vector"])
+
+    sub_crack = nodes.new("ShaderNodeMath")
+    sub_crack.operation = "SUBTRACT"
+    sub_crack.inputs[0].default_value = 1.0
+    sub_crack.location = (-200, 250)
+    links.new(voronoi.outputs["Distance"], sub_crack.inputs[1])
+
+    pow_crack = nodes.new("ShaderNodeMath")
+    pow_crack.operation = "POWER"
+    pow_crack.inputs[1].default_value = 3.0
+    pow_crack.location = (-50, 250)
+    links.new(sub_crack.outputs["Value"], pow_crack.inputs[0])
+
+    mul_fiss_d = nodes.new("ShaderNodeMath")
+    mul_fiss_d.operation = "MULTIPLY"
+    mul_fiss_d.location = (100, 200)
+    links.new(pow_crack.outputs["Value"], mul_fiss_d.inputs[0])
+    links.new(in_n.outputs["Bark Fissure Depth"], mul_fiss_d.inputs[1])
+
+    mul_fiss_age = nodes.new("ShaderNodeMath")
+    mul_fiss_age.operation = "MULTIPLY"
+    mul_fiss_age.location = (250, 200)
+    links.new(mul_fiss_d.outputs["Value"], mul_fiss_age.inputs[0])
+    links.new(age_influence.outputs["Value"], mul_fiss_age.inputs[1])
+
+    # Negative normal for inward carving
+    neg_fiss = nodes.new("ShaderNodeMath")
+    neg_fiss.operation = "MULTIPLY"
+    neg_fiss.inputs[1].default_value = -1.0
+    neg_fiss.location = (400, 200)
+    links.new(mul_fiss_age.outputs["Value"], neg_fiss.inputs[0])
+
+    # 4. Fluting & Burl Gnarliness
+    noise_flute = nodes.new("ShaderNodeTexNoise")
+    noise_flute.inputs["Scale"].default_value = 1.2
+    noise_flute.inputs["Detail"].default_value = 2.5
+    noise_flute.location = (-400, 50)
+    links.new(pos.outputs["Position"], noise_flute.inputs["Vector"])
+
+    sub_flute = nodes.new("ShaderNodeMath")
+    sub_flute.operation = "SUBTRACT"
+    sub_flute.inputs[1].default_value = 0.5
+    sub_flute.location = (-200, 50)
+    links.new(noise_flute.outputs["Fac"], sub_flute.inputs[0])
+
+    mul_flute1 = nodes.new("ShaderNodeMath")
+    mul_flute1.operation = "MULTIPLY"
+    mul_flute1.location = (-50, 50)
+    links.new(sub_flute.outputs["Value"], mul_flute1.inputs[0])
+    links.new(in_n.outputs["Trunk Fluting"], mul_flute1.inputs[1])
+
+    # Burl noise
+    noise_burl = nodes.new("ShaderNodeTexNoise")
+    noise_burl.inputs["Scale"].default_value = 0.65
+    noise_burl.inputs["Detail"].default_value = 3.0
+    noise_burl.location = (-400, -100)
+    links.new(pos.outputs["Position"], noise_burl.inputs["Vector"])
+
+    sub_burl = nodes.new("ShaderNodeMath")
+    sub_burl.operation = "SUBTRACT"
+    sub_burl.inputs[1].default_value = 0.48
+    sub_burl.location = (-200, -100)
+    links.new(noise_burl.outputs["Fac"], sub_burl.inputs[0])
+
+    max_burl = nodes.new("ShaderNodeMath")
+    max_burl.operation = "MAXIMUM"
+    max_burl.inputs[1].default_value = 0.0
+    max_burl.location = (-50, -100)
+    links.new(sub_burl.outputs["Value"], max_burl.inputs[0])
+
+    mul_burl1 = nodes.new("ShaderNodeMath")
+    mul_burl1.operation = "MULTIPLY"
+    mul_burl1.location = (100, -100)
+    links.new(max_burl.outputs["Value"], mul_burl1.inputs[0])
+    links.new(in_n.outputs["Burl Gnarliness"], mul_burl1.inputs[1])
+
+    # Add fluting + burl
+    add_bump = nodes.new("ShaderNodeMath")
+    add_bump.operation = "ADD"
+    add_bump.location = (250, 0)
+    links.new(mul_flute1.outputs["Value"], add_bump.inputs[0])
+    links.new(mul_burl1.outputs["Value"], add_bump.inputs[1])
+
+    mul_bump_rad = nodes.new("ShaderNodeMath")
+    mul_bump_rad.operation = "MULTIPLY"
+    mul_bump_rad.location = (400, 0)
+    links.new(add_bump.outputs["Value"], mul_bump_rad.inputs[0])
+    links.new(in_n.outputs["Trunk Base Radius"], mul_bump_rad.inputs[1])
+
+    mul_bump_age = nodes.new("ShaderNodeMath")
+    mul_bump_age.operation = "MULTIPLY"
+    mul_bump_age.location = (550, 0)
+    links.new(mul_bump_rad.outputs["Value"], mul_bump_age.inputs[0])
+    links.new(age_influence.outputs["Value"], mul_bump_age.inputs[1])
+
+    # Total normal displacement amplitude = neg_fiss + mul_bump_age
+    total_disp_amp = nodes.new("ShaderNodeMath")
+    total_disp_amp.operation = "ADD"
+    total_disp_amp.location = (700, 100)
+    links.new(neg_fiss.outputs["Value"], total_disp_amp.inputs[0])
+    links.new(mul_bump_age.outputs["Value"], total_disp_amp.inputs[1])
+
+    # Scale normal by total displacement
+    scale_norm_disp = nodes.new("ShaderNodeVectorMath")
+    scale_norm_disp.operation = "SCALE"
+    scale_norm_disp.location = (850, 100)
+    links.new(norm.outputs["Normal"], scale_norm_disp.inputs["Vector"])
+    links.new(total_disp_amp.outputs["Value"], scale_norm_disp.inputs["Scale"])
+
+    # Displace wood surface
+    set_disp_wood = nodes.new("GeometryNodeSetPosition")
+    set_disp_wood.location = (1000, 150)
+    links.new(in_n.outputs["Geometry"], set_disp_wood.inputs["Geometry"])
+    links.new(scale_norm_disp.outputs["Vector"], set_disp_wood.inputs["Offset"])
+
+    # 5. Trunk Cavities & Hollow Cutters
+    ico1 = nodes.new("GeometryNodeMeshIcoSphere")
+    ico1.inputs["Radius"].default_value = 1.0
+    ico1.inputs["Subdivisions"].default_value = 3
+    ico1.location = (0, 500)
+
+    # Noise deformation on cutter
+    noise_cav = nodes.new("ShaderNodeTexNoise")
+    noise_cav.inputs["Scale"].default_value = 1.8
+    noise_cav.location = (150, 650)
+    ico_pos = nodes.new("GeometryNodeInputPosition")
+    ico_pos.location = (0, 650)
+    links.new(ico_pos.outputs["Position"], noise_cav.inputs["Vector"])
+
+    sub_cav_noise = nodes.new("ShaderNodeVectorMath")
+    sub_cav_noise.operation = "SUBTRACT"
+    sub_cav_noise.inputs[1].default_value = (0.5, 0.5, 0.5)
+    sub_cav_noise.location = (300, 650)
+    links.new(noise_cav.outputs["Color"], sub_cav_noise.inputs[0])
+
+    scale_cav_noise = nodes.new("ShaderNodeVectorMath")
+    scale_cav_noise.operation = "SCALE"
+    scale_cav_noise.inputs["Scale"].default_value = 0.22
+    scale_cav_noise.location = (450, 650)
+    links.new(sub_cav_noise.outputs["Vector"], scale_cav_noise.inputs["Vector"])
+
+    disp_cav = nodes.new("GeometryNodeSetPosition")
+    disp_cav.location = (600, 500)
+    links.new(ico1.outputs["Mesh"], disp_cav.inputs["Geometry"])
+    links.new(scale_cav_noise.outputs["Vector"], disp_cav.inputs["Offset"])
+
+    # Scale cutter: Cavity Scale * Trunk Base Radius * min(1.15, age_norm * 0.45)
+    mul_age_cav = nodes.new("ShaderNodeMath")
+    mul_age_cav.operation = "MULTIPLY"
+    mul_age_cav.inputs[1].default_value = 0.45
+    mul_age_cav.location = (400, 350)
+    links.new(age_norm.outputs["Value"], mul_age_cav.inputs[0])
+
+    min_age_cav = nodes.new("ShaderNodeMath")
+    min_age_cav.operation = "MINIMUM"
+    min_age_cav.inputs[1].default_value = 1.15
+    min_age_cav.location = (520, 350)
+    links.new(mul_age_cav.outputs["Value"], min_age_cav.inputs[0])
+
+    mul_cav_r1 = nodes.new("ShaderNodeMath")
+    mul_cav_r1.operation = "MULTIPLY"
+    mul_cav_r1.location = (640, 350)
+    links.new(in_n.outputs["Trunk Base Radius"], mul_cav_r1.inputs[0])
+    links.new(in_n.outputs["Cavity Scale"], mul_cav_r1.inputs[1])
+
+    mul_cav_r2 = nodes.new("ShaderNodeMath")
+    mul_cav_r2.operation = "MULTIPLY"
+    mul_cav_r2.location = (760, 350)
+    links.new(mul_cav_r1.outputs["Value"], mul_cav_r2.inputs[0])
+    links.new(min_age_cav.outputs["Value"], mul_cav_r2.inputs[1])
+
+    # Elongated scale: (R * 0.70, R * 0.65, R * 1.50)
+    mul_sx = nodes.new("ShaderNodeMath")
+    mul_sx.operation = "MULTIPLY"
+    mul_sx.inputs[1].default_value = 0.70
+    mul_sx.location = (900, 450)
+    links.new(mul_cav_r2.outputs["Value"], mul_sx.inputs[0])
+
+    mul_sy = nodes.new("ShaderNodeMath")
+    mul_sy.operation = "MULTIPLY"
+    mul_sy.inputs[1].default_value = 0.65
+    mul_sy.location = (900, 350)
+    links.new(mul_cav_r2.outputs["Value"], mul_sy.inputs[0])
+
+    mul_sz = nodes.new("ShaderNodeMath")
+    mul_sz.operation = "MULTIPLY"
+    mul_sz.inputs[1].default_value = 1.50
+    mul_sz.location = (900, 250)
+    links.new(mul_cav_r2.outputs["Value"], mul_sz.inputs[0])
+
+    comb_cav_s = nodes.new("ShaderNodeCombineXYZ")
+    comb_cav_s.location = (1050, 350)
+    links.new(mul_sx.outputs["Value"], comb_cav_s.inputs["X"])
+    links.new(mul_sy.outputs["Value"], comb_cav_s.inputs["Y"])
+    links.new(mul_sz.outputs["Value"], comb_cav_s.inputs["Z"])
+
+    # Translation to trunk perimeter at Cavity Height along front face (-Y)
+    mul_ty = nodes.new("ShaderNodeMath")
+    mul_ty.operation = "MULTIPLY"
+    mul_ty.inputs[1].default_value = -0.55
+    mul_ty.location = (900, 550)
+    links.new(in_n.outputs["Trunk Base Radius"], mul_ty.inputs[0])
+
+    comb_cav_t = nodes.new("ShaderNodeCombineXYZ")
+    comb_cav_t.inputs["X"].default_value = 0.0
+    comb_cav_t.location = (1050, 500)
+    links.new(mul_ty.outputs["Value"], comb_cav_t.inputs["Y"])
+    links.new(in_n.outputs["Cavity Height"], comb_cav_t.inputs["Z"])
+
+    xform_cav = nodes.new("GeometryNodeTransform")
+    xform_cav.location = (1200, 400)
+    links.new(disp_cav.outputs["Geometry"], xform_cav.inputs["Geometry"])
+    links.new(comb_cav_t.outputs["Vector"], xform_cav.inputs["Translation"])
+    links.new(comb_cav_s.outputs["Vector"], xform_cav.inputs["Scale"])
+
+    # Carve cavity via MeshBoolean
+    boolean_cav = nodes.new("GeometryNodeMeshBoolean")
+    boolean_cav.operation = 'DIFFERENCE'
+    boolean_cav.location = (1350, 200)
+    links.new(set_disp_wood.outputs["Geometry"], boolean_cav.inputs["Mesh 1"])
+    links.new(xform_cav.outputs["Geometry"], boolean_cav.inputs["Mesh 2"])
+
+    # Condition for cavity: Cavities Enable is True AND Tree Age >= 60.0
+    age_thresh = nodes.new("FunctionNodeCompare")
+    age_thresh.data_type = "FLOAT"
+    age_thresh.operation = "GREATER_THAN"
+    age_thresh.inputs["B"].default_value = 60.0
+    age_thresh.location = (1050, -100)
+    links.new(in_n.outputs["Tree Age"], age_thresh.inputs["A"])
+
+    and_cav = nodes.new("FunctionNodeBooleanMath")
+    and_cav.operation = "AND"
+    and_cav.location = (1200, -100)
+    links.new(in_n.outputs["Cavities Enable"], and_cav.inputs[0])
+    links.new(age_thresh.outputs["Result"], and_cav.inputs[1])
+
+    switch_cav = nodes.new("GeometryNodeSwitch")
+    switch_cav.input_type = "GEOMETRY"
+    switch_cav.location = (1450, 100)
+    links.new(and_cav.outputs["Boolean"], switch_cav.inputs["Switch"])
+    links.new(set_disp_wood.outputs["Geometry"], switch_cav.inputs["False"])
+    links.new(boolean_cav.outputs["Mesh"], switch_cav.inputs["True"])
+
+    links.new(switch_cav.outputs["Output"], out_n.inputs["Geometry"])
+    return tree
+
+
+# ---------------------------------------------------------------------------
+# 6. Master Geometry Node Tree: Procedural Tree & Foliage Suite
 # ---------------------------------------------------------------------------
 def build_procedural_tree_suite_master(force_rebuild=False):
     """Builds the comprehensive master tree modifier node graph."""
@@ -1021,6 +1422,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     trop_sub = build_tropisms_group(force_rebuild=force_rebuild)
     branch_tier_sub = build_branch_tier_group(force_rebuild=force_rebuild)
     foliage_sub = build_foliage_generator_group(force_rebuild=force_rebuild)
+    aging_sub = build_tree_aging_group(force_rebuild=force_rebuild)
 
     if master_name in bpy.data.node_groups:
         tree = bpy.data.node_groups[master_name]
@@ -1151,6 +1553,17 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     add_interface_socket(tree, "Scan Remesh Union", "INPUT", "NodeSocketBool", default_value=False)
     add_interface_socket(tree, "Scan Voxel Size", "INPUT", "NodeSocketFloat", default_value=0.05, min_val=0.005, max_val=0.5)
     add_interface_socket(tree, "Scan Voxel Adaptivity", "INPUT", "NodeSocketFloat", default_value=0.05, min_val=0.0, max_val=1.0)
+
+    # Category 8.5: Ancient Aging, Weathering & Cavities
+    add_interface_socket(tree, "Tree Age", "INPUT", "NodeSocketFloat", default_value=180.0, min_val=10.0, max_val=1000.0)
+    add_interface_socket(tree, "Aging Features Enable", "INPUT", "NodeSocketBool", default_value=True)
+    add_interface_socket(tree, "Bark Fissure Depth", "INPUT", "NodeSocketFloat", default_value=0.035, min_val=0.0, max_val=0.2)
+    add_interface_socket(tree, "Bark Fissure Scale", "INPUT", "NodeSocketFloat", default_value=1.0, min_val=0.1, max_val=5.0)
+    add_interface_socket(tree, "Trunk Fluting", "INPUT", "NodeSocketFloat", default_value=0.40, min_val=0.0, max_val=2.0)
+    add_interface_socket(tree, "Burl Gnarliness", "INPUT", "NodeSocketFloat", default_value=0.35, min_val=0.0, max_val=2.0)
+    add_interface_socket(tree, "Cavities Enable", "INPUT", "NodeSocketBool", default_value=True)
+    add_interface_socket(tree, "Cavity Scale", "INPUT", "NodeSocketFloat", default_value=0.38, min_val=0.05, max_val=1.5)
+    add_interface_socket(tree, "Cavity Height", "INPUT", "NodeSocketFloat", default_value=1.6, min_val=0.5, max_val=5.0)
 
     # Category 9: Meshing & Materials
     add_interface_socket(tree, "Mesh Resolution", "INPUT", "NodeSocketInt", default_value=16, min_val=3, max_val=64)
@@ -1807,6 +2220,30 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     links.new(curve_profile.outputs["Curve"], curve_to_mesh.inputs["Profile Curve"])
     links.new(rad_clamp.outputs["Value"], curve_to_mesh.inputs["Scale"])
 
+    # 7.5. Ancient Aging, Bark Fissures & Cavities Sub-Group
+    aging_node = nodes.new("GeometryNodeGroup")
+    aging_node.node_tree = aging_sub
+    aging_node.location = (2000, 150)
+    links.new(curve_to_mesh.outputs["Mesh"], aging_node.inputs["Geometry"])
+    links.new(in_node.outputs["Tree Age"], aging_node.inputs["Tree Age"])
+    links.new(in_node.outputs["Bark Fissure Depth"], aging_node.inputs["Bark Fissure Depth"])
+    links.new(in_node.outputs["Bark Fissure Scale"], aging_node.inputs["Bark Fissure Scale"])
+    links.new(in_node.outputs["Trunk Fluting"], aging_node.inputs["Trunk Fluting"])
+    links.new(in_node.outputs["Burl Gnarliness"], aging_node.inputs["Burl Gnarliness"])
+    links.new(in_node.outputs["Cavities Enable"], aging_node.inputs["Cavities Enable"])
+    links.new(in_node.outputs["Cavity Scale"], aging_node.inputs["Cavity Scale"])
+    links.new(in_node.outputs["Cavity Height"], aging_node.inputs["Cavity Height"])
+    links.new(in_node.outputs["Trunk Base Radius"], aging_node.inputs["Trunk Base Radius"])
+    links.new(in_node.outputs["Trunk Height"], aging_node.inputs["Trunk Height"])
+
+    # Switch to bypass aging if Aging Features Enable is False
+    switch_aging = nodes.new("GeometryNodeSwitch")
+    switch_aging.input_type = "GEOMETRY"
+    switch_aging.location = (2200, 150)
+    links.new(in_node.outputs["Aging Features Enable"], switch_aging.inputs["Switch"])
+    links.new(curve_to_mesh.outputs["Mesh"], switch_aging.inputs["False"])
+    links.new(aging_node.outputs["Geometry"], switch_aging.inputs["True"])
+
     # Organic Remesh Union (SDF Mesh to Volume -> Volume to Mesh)
     mesh_to_vol = nodes.new("GeometryNodeMeshToVolume")
     try:
@@ -1814,8 +2251,8 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     except Exception:
         pass
     mesh_to_vol.inputs["Density"].default_value = 1.0
-    mesh_to_vol.location = (1950, 300)
-    links.new(curve_to_mesh.outputs["Mesh"], mesh_to_vol.inputs["Mesh"])
+    mesh_to_vol.location = (2400, 300)
+    links.new(switch_aging.outputs["Output"], mesh_to_vol.inputs["Mesh"])
     links.new(in_node.outputs["Union Voxel Size"], mesh_to_vol.inputs["Voxel Size"])
 
     vol_to_mesh = nodes.new("GeometryNodeVolumeToMesh")
@@ -1824,7 +2261,7 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     except Exception:
         pass
     vol_to_mesh.inputs["Threshold"].default_value = 0.1
-    vol_to_mesh.location = (2100, 300)
+    vol_to_mesh.location = (2550, 300)
     links.new(mesh_to_vol.outputs["Volume"], vol_to_mesh.inputs["Volume"])
     links.new(in_node.outputs["Union Voxel Size"], vol_to_mesh.inputs["Voxel Size"])
     links.new(in_node.outputs["Voxel Adaptivity"], vol_to_mesh.inputs["Adaptivity"])
@@ -1832,48 +2269,48 @@ def build_procedural_tree_suite_master(force_rebuild=False):
     # Switch between fast CurveToMesh and Organic Remesh Union
     switch_union = nodes.new("GeometryNodeSwitch")
     switch_union.input_type = "GEOMETRY"
-    switch_union.location = (2250, 150)
+    switch_union.location = (2700, 150)
     links.new(in_node.outputs["Organic Smooth Union"], switch_union.inputs["Switch"])
-    links.new(curve_to_mesh.outputs["Mesh"], switch_union.inputs["False"])
+    links.new(switch_aging.outputs["Output"], switch_union.inputs["False"])
     links.new(vol_to_mesh.outputs["Mesh"], switch_union.inputs["True"])
 
     # Shade Smooth for Wood Mesh
     smooth_wood = nodes.new("GeometryNodeSetShadeSmooth")
-    smooth_wood.location = (2400, 150)
+    smooth_wood.location = (2850, 150)
     links.new(switch_union.outputs["Output"], smooth_wood.inputs["Geometry"])
 
     # Set Bark Material
     set_mat_bark = nodes.new("GeometryNodeSetMaterial")
-    set_mat_bark.location = (2550, 150)
+    set_mat_bark.location = (3000, 150)
     links.new(smooth_wood.outputs["Geometry"], set_mat_bark.inputs["Geometry"])
     links.new(in_node.outputs["Bark Material"], set_mat_bark.inputs["Material"])
 
     # Shade Smooth for Leaves
     smooth_leaves = nodes.new("GeometryNodeSetShadeSmooth")
-    smooth_leaves.location = (2100, 450)
+    smooth_leaves.location = (2550, 450)
     links.new(foliage_node.outputs["Foliage Geometry"], smooth_leaves.inputs["Geometry"])
 
     # Set Leaf Material
     set_mat_leaf = nodes.new("GeometryNodeSetMaterial")
-    set_mat_leaf.location = (2250, 450)
+    set_mat_leaf.location = (2700, 450)
     links.new(smooth_leaves.outputs["Geometry"], set_mat_leaf.inputs["Geometry"])
     links.new(in_node.outputs["Leaf Material"], set_mat_leaf.inputs["Material"])
 
     # Switch leaves bypass if Leaves Enable is False
     switch_leaves = nodes.new("GeometryNodeSwitch")
     switch_leaves.input_type = "GEOMETRY"
-    switch_leaves.location = (2400, 450)
+    switch_leaves.location = (2850, 450)
     links.new(in_node.outputs["Leaves Enable"], switch_leaves.inputs["Switch"])
     links.new(set_mat_leaf.outputs["Geometry"], switch_leaves.inputs["True"])
 
     # Join Wood Mesh and Foliage
     join_final = nodes.new("GeometryNodeJoinGeometry")
-    join_final.location = (2700, 200)
+    join_final.location = (3150, 200)
     links.new(set_mat_bark.outputs["Geometry"], join_final.inputs["Geometry"])
     links.new(switch_leaves.outputs["Output"], join_final.inputs["Geometry"])
 
     # Output final procedural geometry
-    out_node.location = (2900, 200)
+    out_node.location = (3350, 200)
     links.new(join_final.outputs["Geometry"], out_node.inputs["Geometry"])
 
     return tree
