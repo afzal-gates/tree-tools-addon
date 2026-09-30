@@ -1,0 +1,13 @@
+schema_version = "1.0.0"
+
+id = "procedural_tree_foliage_suite"
+version = "1.0.0"
+name = "Procedural Tree & Foliage Suite"
+tagline = "Procedural tree & foliage generator with tropisms and Pivot Painter 2.0"
+maintainer = "Technical Artist & Pipeline Team"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+license = [
+  "SPDX:GPL-2.0-or-later",
+]
